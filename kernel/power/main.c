@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2003 Patrick Mochel
  * Copyright (c) 2003 Open Source Development Lab
+ * Copyright (C) 2018-2019 Razer Inc.
  *
  * This file is released under the GPLv2
  *
@@ -17,6 +18,11 @@
 #include <linux/seq_file.h>
 
 #include "power.h"
+
+#ifdef CONFIG_FIH
+#define SHORT_SLEEP_MSEC 1100
+#endif
+
 
 DEFINE_MUTEX(pm_mutex);
 
@@ -357,6 +363,11 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 {
 	suspend_state_t state;
 	int error;
+#ifdef CONFIG_FIH
+	struct timespec ts_entry, ts_exit;
+	u64 elapsed_msecs64;
+	u32 elapsed_msecs32;
+#endif
 
 	error = pm_autosleep_lock();
 	if (error)
@@ -368,9 +379,29 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 	}
 
 	state = decode_state(buf, n);
+#ifdef CONFIG_FIH
+	if (state < PM_SUSPEND_MAX) {
+		getnstimeofday(&ts_entry);
+		error = pm_suspend(state);
+		getnstimeofday(&ts_exit);
+
+		/* Only needed for successful suspend */
+		if (!error) {
+			elapsed_msecs64 = timespec_to_ns(&ts_exit) -
+				timespec_to_ns(&ts_entry);
+			do_div(elapsed_msecs64, NSEC_PER_MSEC);
+			elapsed_msecs32 = elapsed_msecs64;
+
+			if (elapsed_msecs32 <= SHORT_SLEEP_MSEC) {
+				error = -ETIME;
+			}
+		}
+	} else if (state == PM_SUSPEND_MAX)
+#else
 	if (state < PM_SUSPEND_MAX)
 		error = pm_suspend(state);
 	else if (state == PM_SUSPEND_MAX)
+#endif
 		error = hibernate();
 	else
 		error = -EINVAL;
