@@ -473,7 +473,65 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 			to_sde_encoder_phys_cmd(phys_enc);
 	u32 frame_event = SDE_ENCODER_FRAME_EVENT_ERROR
 				| SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE;
+#ifdef CONFIG_FIH
+	u32 pending_kickoff_cnt;
 
+	if (!phys_enc || !phys_enc->hw_pp || !phys_enc->hw_ctl)
+		return -EINVAL;
+
+	cmd_enc->pp_timeout_report_cnt++;
+	pending_kickoff_cnt = atomic_read(&phys_enc->pending_kickoff_cnt);
+
+	if (sde_encoder_phys_cmd_is_master(phys_enc)) {
+		 /* trigger the retire fence if it was missed */
+		if (atomic_add_unless(&phys_enc->pending_retire_fence_cnt,
+				-1, 0))
+			phys_enc->parent_ops.handle_frame_done(
+				phys_enc->parent,
+				phys_enc,
+				SDE_ENCODER_FRAME_EVENT_SIGNAL_RETIRE_FENCE);
+		atomic_add_unless(&phys_enc->pending_ctlstart_cnt, -1, 0);
+	}
+
+	SDE_EVT32(DRMID(phys_enc->parent), phys_enc->hw_pp->idx - PINGPONG_0,
+			cmd_enc->pp_timeout_report_cnt,
+			pending_kickoff_cnt,
+			frame_event);
+
+	/* decrement the kickoff_cnt before checking for ESD status */
+	atomic_add_unless(&phys_enc->pending_kickoff_cnt, -1, 0);
+
+	/* check if panel is still sending TE signal or not */
+	if (sde_connector_esd_status(phys_enc->connector))
+		goto exit;
+
+	if (cmd_enc->pp_timeout_report_cnt >= PP_TIMEOUT_MAX_TRIALS) {
+		cmd_enc->pp_timeout_report_cnt = PP_TIMEOUT_MAX_TRIALS;
+		frame_event |= SDE_ENCODER_FRAME_EVENT_PANEL_DEAD;
+
+		SDE_DBG_DUMP("panic");
+	} else if (cmd_enc->pp_timeout_report_cnt == 1) {
+		/* to avoid flooding, only log first time, and "dead" time */
+		SDE_ERROR_CMDENC(cmd_enc,
+				"pp:%d kickoff timed out ctl %d cnt %d koff_cnt %d\n",
+				phys_enc->hw_pp->idx - PINGPONG_0,
+				phys_enc->hw_ctl->idx - CTL_0,
+				cmd_enc->pp_timeout_report_cnt,
+				pending_kickoff_cnt);
+
+		SDE_EVT32(DRMID(phys_enc->parent), SDE_EVTLOG_FATAL);
+	}
+
+	/* request a ctl reset before the next kickoff */
+	phys_enc->enable_state = SDE_ENC_ERR_NEEDS_HW_RESET;
+
+exit:
+	if (phys_enc->parent_ops.handle_frame_done)
+		phys_enc->parent_ops.handle_frame_done(
+				phys_enc->parent, phys_enc, frame_event);
+
+	return -ETIMEDOUT;
+#else
 	if (!phys_enc || !phys_enc->hw_pp || !phys_enc->hw_ctl)
 		return -EINVAL;
 
@@ -527,6 +585,7 @@ exit:
 				phys_enc->parent, phys_enc, frame_event);
 
 	return -ETIMEDOUT;
+#endif
 }
 
 static bool _sde_encoder_phys_is_ppsplit_slave(
@@ -832,7 +891,11 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc)
 			goto exit;
 		}
 
+#ifdef CONFIG_FIH
+		if (qsync_min_fps > default_fps) {
+#else
 		if (qsync_min_fps >= default_fps) {
+#endif
 			SDE_ERROR_CMDENC(cmd_enc,
 				"qsync fps:%d must be less than default:%d\n",
 				qsync_min_fps, default_fps);
@@ -1177,6 +1240,20 @@ static void sde_encoder_phys_cmd_get_hw_resources(
 	hw_res->intfs[phys_enc->intf_idx - INTF_0] = INTF_MODE_CMD;
 }
 
+#ifdef CONFIG_FIH
+static void sde_encoder_phys_cmd_handle_post_kickoff(
+		struct sde_encoder_phys *phys_enc)
+{
+	if (!phys_enc || !phys_enc->hw_pp) {
+		SDE_ERROR("invalid encoder\n");
+		return;
+	}
+
+	phys_enc->cached_mode.private_flags &=
+		~(MSM_MODE_FLAG_SEAMLESS_PANEL_DMS | MSM_MODE_FLAG_SEAMLESS_DMS);
+}
+#endif
+
 static int sde_encoder_phys_cmd_prepare_for_kickoff(
 		struct sde_encoder_phys *phys_enc,
 		struct sde_encoder_kickoff_params *params)
@@ -1238,6 +1315,15 @@ static int _sde_encoder_phys_cmd_wait_for_ctl_start(
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_FIH
+	/* slave encoder doesn't enable for ppsplit */
+	if (_sde_encoder_phys_is_ppsplit_slave(phys_enc))
+		return 0;
+
+	wait_info.wq = &phys_enc->pending_kickoff_wq;
+	wait_info.atomic_cnt = &phys_enc->pending_ctlstart_cnt;
+	wait_info.timeout_ms = KICKOFF_TIMEOUT_MS;
+#else
 	wait_info.wq = &phys_enc->pending_kickoff_wq;
 	wait_info.atomic_cnt = &phys_enc->pending_ctlstart_cnt;
 	wait_info.timeout_ms = KICKOFF_TIMEOUT_MS;
@@ -1245,6 +1331,7 @@ static int _sde_encoder_phys_cmd_wait_for_ctl_start(
 	/* slave encoder doesn't enable for ppsplit */
 	if (_sde_encoder_phys_is_ppsplit_slave(phys_enc))
 		return 0;
+#endif
 
 	ret = sde_encoder_helper_wait_for_irq(phys_enc, INTR_IDX_CTL_START,
 			&wait_info);
@@ -1478,6 +1565,9 @@ static void sde_encoder_phys_cmd_init_ops(
 	ops->control_vblank_irq = sde_encoder_phys_cmd_control_vblank_irq;
 	ops->wait_for_commit_done = sde_encoder_phys_cmd_wait_for_commit_done;
 	ops->prepare_for_kickoff = sde_encoder_phys_cmd_prepare_for_kickoff;
+#ifdef CONFIG_FIH
+	ops->handle_post_kickoff = sde_encoder_phys_cmd_handle_post_kickoff;
+#endif
 	ops->wait_for_tx_complete = sde_encoder_phys_cmd_wait_for_tx_complete;
 	ops->wait_for_vblank = sde_encoder_phys_cmd_wait_for_vblank;
 	ops->trigger_flush = sde_encoder_helper_trigger_flush;
