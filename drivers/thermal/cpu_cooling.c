@@ -767,6 +767,21 @@ update_frequency:
 	clip_freq = cpufreq_device->freq_table[state];
 	cpufreq_device->clipped_freq = clip_freq;
 
+#ifdef CONFIG_FIH
+	/* Check if the device has a platform mitigation function that
+	 * can handle the CPU freq mitigation. Also notify cpufreq
+	 * framework in any case.
+	 */
+	if (cpufreq_device->plat_ops) {
+		if (cpufreq_device->plat_ops->ceil_limit)
+			cpufreq_device->plat_ops->ceil_limit(cpu,
+						clip_freq);
+	}
+	if (cpumask_and(&policy_online_cpus, cpu_online_mask,
+			cpufreq_device->policy->related_cpus))
+		cpufreq_update_policy(cpumask_first(
+					&policy_online_cpus));
+#else
 	/* Check if the device has a platform mitigation function that
 	 * can handle the CPU freq mitigation, if not, notify cpufreq
 	 * framework.
@@ -781,6 +796,7 @@ update_frequency:
 			cpufreq_update_policy(cpumask_first(
 						&policy_online_cpus));
 	}
+#endif
 
 	return 0;
 }
@@ -1173,7 +1189,11 @@ __cpufreq_cooling_register(struct device_node *np,
 	mutex_unlock(&cooling_list_lock);
 
 	/* Register the notifier for first cpufreq cooling device */
+#ifdef CONFIG_FIH
+	if (!cpufreq_dev_count++)
+#else
 	if (!cpufreq_dev_count++ && !cpufreq_dev->plat_ops)
+#endif
 		cpufreq_register_notifier(&thermal_cpufreq_notifier_block,
 					  CPUFREQ_POLICY_NOTIFIER);
 	if (!cpuhp_registered) {
@@ -1357,10 +1377,16 @@ void cpufreq_cooling_unregister(struct thermal_cooling_device *cdev)
 	mutex_lock(&cooling_cpufreq_lock);
 	if (!--cpufreq_dev_count) {
 		unregister_pm_notifier(&cpufreq_cooling_pm_nb);
+#ifdef CONFIG_FIH
+		cpufreq_unregister_notifier(
+			&thermal_cpufreq_notifier_block,
+			CPUFREQ_POLICY_NOTIFIER);
+#else
 		if (!cpufreq_dev->plat_ops)
 			cpufreq_unregister_notifier(
 				&thermal_cpufreq_notifier_block,
 				CPUFREQ_POLICY_NOTIFIER);
+#endif
 	}
 
 	mutex_lock(&cooling_list_lock);
