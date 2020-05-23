@@ -41,6 +41,10 @@
 #define MSM_MODE_FLAG_SEAMLESS_DMS			(1<<2)
 /* Request to switch the fps */
 #define MSM_MODE_FLAG_SEAMLESS_VRR			(1<<3)
+#ifdef CONFIG_FIH
+/* Request to update panel timings  */
+#define MSM_MODE_FLAG_SEAMLESS_PANEL_DMS		(1<<4)
+#endif
 
 /*
  * We need setting some flags in bridge, and using them in encoder. Add them in
@@ -188,6 +192,14 @@ static inline bool msm_is_mode_seamless_dms(const struct drm_display_mode *mode)
 	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_DMS)
 		: false;
 }
+
+#ifdef CONFIG_FIH
+static inline bool msm_is_mode_seamless_panel_dms(const struct drm_display_mode *mode)
+{
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_PANEL_DMS)
+		: false;
+}
+#endif
 
 static inline bool msm_is_mode_dynamic_fps(const struct drm_display_mode *mode)
 {
