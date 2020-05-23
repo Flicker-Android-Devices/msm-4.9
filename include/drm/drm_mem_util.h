@@ -78,4 +78,26 @@ static __inline void drm_free_large(void *ptr)
 	kvfree(ptr);
 }
 
+#ifdef CONFIG_FIH
+static __inline void *drm_kvzalloc(size_t size, gfp_t flags)
+{
+	gfp_t alloc_flags = flags;
+	void *ret;
+
+	if (size > PAGE_SIZE)
+		alloc_flags |= __GFP_NORETRY | __GFP_NOWARN;
+
+	ret = kzalloc(size, alloc_flags);
+
+	/*
+	 * It doesn't really make sense to fallback to vmalloc for sub page
+	 * requests
+	 */
+	if (ret || size <= PAGE_SIZE)
+		return ret;
+
+	return vzalloc(size);
+}
+#endif
+
 #endif
