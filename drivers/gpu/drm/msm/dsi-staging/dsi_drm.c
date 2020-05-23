@@ -61,6 +61,10 @@ static void convert_to_dsi_mode(const struct drm_display_mode *drm_mode,
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_VBLANK_PRE_MODESET;
 	if (msm_is_mode_seamless_dms(drm_mode))
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_DMS;
+#ifdef CONFIG_FIH
+	if (msm_is_mode_seamless_panel_dms(drm_mode))
+		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_PANEL_DMS;
+#endif
 	if (msm_is_mode_seamless_vrr(drm_mode))
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_VRR;
 
@@ -105,11 +109,32 @@ void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
 		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_DMS;
 	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_VRR)
 		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_VRR;
+#ifdef CONFIG_FIH
+	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_PANEL_DMS)
+		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_PANEL_DMS;
+#endif
 
 	if (dsi_mode->timing.h_sync_polarity)
 		drm_mode->flags |= DRM_MODE_FLAG_PHSYNC;
 	if (dsi_mode->timing.v_sync_polarity)
 		drm_mode->flags |= DRM_MODE_FLAG_PVSYNC;
+
+#ifdef CONFIG_FIH
+	if (dsi_mode->timing.dsc_enabled) {
+		drm_mode->flags &= ~DRM_MODE_FLAG_DSC_BPC_MASK;
+		switch (dsi_mode->timing.dsc->bpc) {
+		case 8:
+			drm_mode->flags |= DRM_MODE_FLAG_DSC_BPC8;
+			break;
+		case 10:
+			drm_mode->flags |= DRM_MODE_FLAG_DSC_BPC10;
+			break;
+		default:
+			pr_warn("Unsupported dsc bpc mode: %d\n",
+					dsi_mode->timing.dsc->bpc);
+		}
+	}
+#endif
 
 	drm_mode_set_name(drm_mode);
 }
@@ -337,11 +362,21 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 
 		convert_to_dsi_mode(&crtc_state->crtc->state->mode,
 							&cur_dsi_mode);
+#ifdef CONFIG_FIH
+		if (c_bridge->display->config.panel_mode == DSI_OP_VIDEO_MODE) {
+			rc = dsi_display_validate_mode_vrr(c_bridge->display,
+						&cur_dsi_mode, &dsi_mode);
+			if (rc)
+				pr_debug("[%s] vrr mode mismatch failure rc=%d\n",
+					c_bridge->display->name, rc);
+		}
+#else
 		rc = dsi_display_validate_mode_vrr(c_bridge->display,
 					&cur_dsi_mode, &dsi_mode);
 		if (rc)
 			pr_debug("[%s] vrr mode mismatch failure rc=%d\n",
 				c_bridge->display->name, rc);
+#endif
 
 		cur_mode = crtc_state->crtc->mode;
 
@@ -349,8 +384,20 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 		if (!drm_mode_equal(&cur_mode, adjusted_mode) &&
 			(!(dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_VRR)) &&
 			(!crtc_state->active_changed ||
+#ifdef CONFIG_FIH
+			 display->is_cont_splash_enabled)) {
+			dsi_mode.dsi_mode_flags |= DSI_MODE_FLAG_DMS;
+
+			/* Trigger panel timings update only if resolution changes. */
+			if (cur_dsi_mode.timing.h_active != dsi_mode.timing.h_active ||
+				cur_dsi_mode.timing.v_active != dsi_mode.timing.v_active)
+				dsi_mode.dsi_mode_flags |= DSI_MODE_FLAG_PANEL_DMS;
+		}
+#else
 			 display->is_cont_splash_enabled))
 			dsi_mode.dsi_mode_flags |= DSI_MODE_FLAG_DMS;
+#endif
+
 	}
 
 	/* convert back to drm mode, propagating the private info & flags */
@@ -880,7 +927,18 @@ int dsi_conn_post_kickoff(struct drm_connector *connector)
 		c_bridge->dsi_mode.dsi_mode_flags &= ~DSI_MODE_FLAG_VRR;
 	}
 
+#ifdef CONFIG_FIH
+	rc = dsi_display_post_kickoff(display);
+
+	if (adj_mode.dsi_mode_flags & DSI_MODE_FLAG_DMS) {
+		c_bridge->dsi_mode.dsi_mode_flags &=
+			~(DSI_MODE_FLAG_DMS | DSI_MODE_FLAG_PANEL_DMS);
+	}
+
+	return rc;
+#else
 	return 0;
+#endif
 }
 
 struct dsi_bridge *dsi_drm_bridge_init(struct dsi_display *display,
