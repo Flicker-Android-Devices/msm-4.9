@@ -40,7 +40,30 @@ void speakup_clear_selection(void)
 /* does screen address p correspond to character at LH/RH edge of screen? */
 static int atedge(const int p, int size_row)
 {
-	return !(p % size_row) || !((p + 2) % size_row);
+	struct speakup_selection_work *ssw =
+		container_of(work, struct speakup_selection_work, work);
+
+	struct tty_struct *tty;
+	struct tiocl_selection sel;
+
+	sel = ssw->sel;
+
+	/* this ensures we copy sel before releasing the lock below */
+	rmb();
+
+	/* release the lock by setting tty of the struct to NULL */
+	tty = xchg(&ssw->tty, NULL);
+
+	if (spk_sel_cons != vc_cons[fg_console].d) {
+		spk_sel_cons = vc_cons[fg_console].d;
+		pr_warn("Selection: mark console not the same as cut\n");
+		goto unref;
+	}
+
+	set_selection_kernel(&sel, tty);
+
+unref:
+	tty_kref_put(tty);
 }
 
 /* constrain v such that v <= u */
