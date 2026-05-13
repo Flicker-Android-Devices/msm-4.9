@@ -20,7 +20,11 @@
 #include <linux/pmic-voter.h>
 #include "step-chg-jeita.h"
 
+#if defined(CONFIG_FIH_BATTERY)
+#define MAX_STEP_CHG_ENTRIES	4
+#else
 #define MAX_STEP_CHG_ENTRIES	8
+#endif /* CONFIG_FIH_BATTERY */
 #define STEP_CHG_VOTER		"STEP_CHG_VOTER"
 #define JEITA_VOTER		"JEITA_VOTER"
 
@@ -72,6 +76,9 @@ struct step_chg_info {
 	int			jeita_fv_index;
 	int			step_index;
 	int			get_config_retry_count;
+#ifdef CONFIG_FIH
+	int			last_jeita_status;
+#endif
 
 	struct step_chg_cfg	*step_chg_config;
 	struct jeita_fcc_cfg	*jeita_fcc_config;
@@ -211,7 +218,11 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 	handle = of_get_property(chip->dev->of_node,
 			"qcom,battery-data", NULL);
 	if (!handle) {
+#ifdef CONFIG_FIH
+		pr_err("ignore getting sw-jeita/step charging settings from profile\n");
+#else
 		pr_debug("ignore getting sw-jeita/step charging settings from profile\n");
+#endif
 		return 0;
 	}
 
@@ -280,10 +291,24 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 			chip->soc_based_step_chg ? 100 : max_fv_uv,
 			max_fcc_ma * 1000);
 	if (rc < 0) {
+#ifdef CONFIG_FIH
+		pr_err("Read qcom,step-chg-ranges failed from battery profile, rc=%d\n",
+					rc);
+#else
 		pr_debug("Read qcom,step-chg-ranges failed from battery profile, rc=%d\n",
 					rc);
+#endif
 		chip->step_chg_cfg_valid = false;
 	}
+
+#if defined(CONFIG_FIH_BATTERY)
+	rc = of_property_read_u32(profile_node, "fih,step-chg-hysteresis",
+					&chip->step_chg_config->hysteresis);
+	if (rc < 0) {
+		pr_err("Read fih,step-chg-hysteresis failed, rc=%d\n", rc);
+		chip->step_chg_cfg_valid = false;
+	}
+#endif /* CONFIG_FIH_BATTERY */
 
 	chip->sw_jeita_cfg_valid = true;
 	rc = read_range_data_from_node(profile_node,
@@ -291,20 +316,48 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 			chip->jeita_fcc_config->fcc_cfg,
 			BATT_HOT_DECIDEGREE_MAX, max_fcc_ma * 1000);
 	if (rc < 0) {
+#ifdef CONFIG_FIH
+		pr_err("Read qcom,jeita-fcc-ranges failed from battery profile, rc=%d\n",
+					rc);
+#else
 		pr_debug("Read qcom,jeita-fcc-ranges failed from battery profile, rc=%d\n",
 					rc);
+#endif
 		chip->sw_jeita_cfg_valid = false;
 	}
+
+#if defined(CONFIG_FIH_BATTERY)
+	rc = of_property_read_u32(profile_node, "fih,jeita-hysteresis",
+					&chip->jeita_fcc_config->hysteresis);
+	if (rc < 0) {
+		pr_err("Read fih,jeita-hysteresis failed, rc=%d\n", rc);
+		chip->sw_jeita_cfg_valid = false;
+	}
+#endif /* CONFIG_FIH_BATTERY */
 
 	rc = read_range_data_from_node(profile_node,
 			"qcom,jeita-fv-ranges",
 			chip->jeita_fv_config->fv_cfg,
 			BATT_HOT_DECIDEGREE_MAX, max_fv_uv);
 	if (rc < 0) {
+#ifdef CONFIG_FIH
+		pr_err("Read qcom,jeita-fv-ranges failed from battery profile, rc=%d\n",
+					rc);
+#else
 		pr_debug("Read qcom,jeita-fv-ranges failed from battery profile, rc=%d\n",
 					rc);
+#endif
 		chip->sw_jeita_cfg_valid = false;
 	}
+
+#if defined(CONFIG_FIH_BATTERY)
+	rc = of_property_read_u32(profile_node, "fih,jeita-hysteresis",
+					&chip->jeita_fv_config->hysteresis);
+	if (rc < 0) {
+		pr_err("Read fih,jeita-hysteresis failed, rc=%d\n", rc);
+		chip->sw_jeita_cfg_valid = false;
+	}
+#endif /* CONFIG_FIH_BATTERY */
 
 	return rc;
 }
@@ -322,8 +375,13 @@ static void get_config_work(struct work_struct *work)
 		if (rc == -ENODEV || rc == -EBUSY) {
 			if (chip->get_config_retry_count++
 					< GET_CONFIG_RETRY_COUNT) {
+#ifdef CONFIG_FIH
+				pr_err("bms_psy is not ready, retry: %d\n",
+						chip->get_config_retry_count);
+#else
 				pr_debug("bms_psy is not ready, retry: %d\n",
 						chip->get_config_retry_count);
+#endif
 				goto reschedule;
 			}
 		}
@@ -331,6 +389,23 @@ static void get_config_work(struct work_struct *work)
 
 	chip->config_is_read = true;
 
+#ifdef CONFIG_FIH
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
+		pr_err("step-chg-cfg: %duV(SoC) ~ %duV(SoC), %duA\n",
+			chip->step_chg_config->fcc_cfg[i].low_threshold,
+			chip->step_chg_config->fcc_cfg[i].high_threshold,
+			chip->step_chg_config->fcc_cfg[i].value);
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
+		pr_err("jeita-fcc-cfg: %ddecidegree ~ %ddecidegre, %duA\n",
+			chip->jeita_fcc_config->fcc_cfg[i].low_threshold,
+			chip->jeita_fcc_config->fcc_cfg[i].high_threshold,
+			chip->jeita_fcc_config->fcc_cfg[i].value);
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
+		pr_err("jeita-fv-cfg: %ddecidegree ~ %ddecidegre, %duV\n",
+			chip->jeita_fv_config->fv_cfg[i].low_threshold,
+			chip->jeita_fv_config->fv_cfg[i].high_threshold,
+			chip->jeita_fv_config->fv_cfg[i].value);
+#else
 	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
 		pr_debug("step-chg-cfg: %duV(SoC) ~ %duV(SoC), %duA\n",
 			chip->step_chg_config->fcc_cfg[i].low_threshold,
@@ -346,6 +421,7 @@ static void get_config_work(struct work_struct *work)
 			chip->jeita_fv_config->fv_cfg[i].low_threshold,
 			chip->jeita_fv_config->fv_cfg[i].high_threshold,
 			chip->jeita_fv_config->fv_cfg[i].value);
+#endif
 
 	return;
 
@@ -355,9 +431,16 @@ reschedule:
 
 }
 
+#ifdef CONFIG_FIH
+static int get_val(struct range_data *range, int hysteresis, int current_index,
+		int threshold,
+		int *new_index, int *val,
+		int last_jeita_status, int current_jeita_status)
+#else
 static int get_val(struct range_data *range, int hysteresis, int current_index,
 		int threshold,
 		int *new_index, int *val)
+#endif
 {
 	int i;
 
@@ -441,6 +524,9 @@ static int handle_step_chg_config(struct step_chg_info *chip)
 	union power_supply_propval pval = {0, };
 	int rc = 0, fcc_ua = 0;
 	u64 elapsed_us;
+#if defined(CONFIG_FIH_BATTERY)
+	int current_step_index = chip->step_index;
+#endif /* CONFIG_FIH_BATTERY */
 
 	elapsed_us = ktime_us_delta(ktime_get(), chip->step_last_update_time);
 	if (elapsed_us < STEP_CHG_HYSTERISIS_DELAY_US)
@@ -467,12 +553,23 @@ static int handle_step_chg_config(struct step_chg_info *chip)
 		return rc;
 	}
 
+#ifdef CONFIG_FIH
+	rc = get_val(chip->step_chg_config->fcc_cfg,
+			chip->step_chg_config->hysteresis,
+			chip->step_index,
+			pval.intval,
+			&chip->step_index,
+			&fcc_ua,
+			POWER_SUPPLY_HEALTH_GOOD,
+			POWER_SUPPLY_HEALTH_GOOD);
+#else
 	rc = get_val(chip->step_chg_config->fcc_cfg,
 			chip->step_chg_config->hysteresis,
 			chip->step_index,
 			pval.intval,
 			&chip->step_index,
 			&fcc_ua);
+#endif
 	if (rc < 0) {
 		/* remove the vote if no step-based fcc is found */
 		if (chip->fcc_votable)
@@ -487,8 +584,16 @@ static int handle_step_chg_config(struct step_chg_info *chip)
 
 	vote(chip->fcc_votable, STEP_CHG_VOTER, true, fcc_ua);
 
+#ifdef CONFIG_FIH
+#if defined(CONFIG_FIH_BATTERY)
+	if (current_step_index != chip->step_index)
+#endif /* CONFIG_FIH_BATTERY */
+	pr_err("%s = %d Step-FCC = %duA\n",
+		chip->step_chg_config->prop_name, pval.intval, fcc_ua);
+#else
 	pr_debug("%s = %d Step-FCC = %duA\n",
 		chip->step_chg_config->prop_name, pval.intval, fcc_ua);
+#endif
 
 update_time:
 	chip->step_last_update_time = ktime_get();
@@ -502,9 +607,16 @@ reschedule:
 #define JEITA_SUSPEND_HYST_UV		50000
 static int handle_jeita(struct step_chg_info *chip)
 {
+#ifdef CONFIG_FIH
+	union power_supply_propval jeita_pval = {0, }; //Only use hysteresis when JEITA change from noraml to cool or warm
+#endif
 	union power_supply_propval pval = {0, };
 	int rc = 0, fcc_ua = 0, fv_uv = 0;
 	u64 elapsed_us;
+#if defined(CONFIG_FIH_BATTERY)
+	int current_jeita_fcc_index = chip->jeita_fcc_index;
+	int current_jeita_fv_index = chip->jeita_fv_index;
+#endif /* CONFIG_FIH_BATTERY */
 
 	rc = power_supply_get_property(chip->batt_psy,
 		POWER_SUPPLY_PROP_SW_JEITA_ENABLED, &pval);
@@ -535,12 +647,32 @@ static int handle_jeita(struct step_chg_info *chip)
 		return rc;
 	}
 
+#ifdef CONFIG_FIH
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_HEALTH, &jeita_pval);
+
+	if(rc < 0) {
+		pr_err("Could not get battery health in handle_jeita\n");
+		return rc;
+	}
+
+	rc = get_val(chip->jeita_fcc_config->fcc_cfg,
+			chip->jeita_fcc_config->hysteresis,
+			chip->jeita_fcc_index,
+			pval.intval,
+			&chip->jeita_fcc_index,
+			&fcc_ua,
+			chip->last_jeita_status,
+			jeita_pval.intval);
+#else
 	rc = get_val(chip->jeita_fcc_config->fcc_cfg,
 			chip->jeita_fcc_config->hysteresis,
 			chip->jeita_fcc_index,
 			pval.intval,
 			&chip->jeita_fcc_index,
 			&fcc_ua);
+#endif
+
 	if (rc < 0)
 		fcc_ua = 0;
 
@@ -552,12 +684,27 @@ static int handle_jeita(struct step_chg_info *chip)
 
 	vote(chip->fcc_votable, JEITA_VOTER, fcc_ua ? true : false, fcc_ua);
 
+#ifdef CONFIG_FIH
+	rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_HEALTH, &jeita_pval);
+
+	rc = get_val(chip->jeita_fv_config->fv_cfg,
+			chip->jeita_fv_config->hysteresis,
+			chip->jeita_fv_index,
+			pval.intval,
+			&chip->jeita_fv_index,
+			&fv_uv,
+			chip->last_jeita_status,
+			jeita_pval.intval);
+#else
 	rc = get_val(chip->jeita_fv_config->fv_cfg,
 			chip->jeita_fv_config->hysteresis,
 			chip->jeita_fv_index,
 			pval.intval,
 			&chip->jeita_fv_index,
 			&fv_uv);
+#endif
+
 	if (rc < 0)
 		fv_uv = 0;
 
@@ -598,7 +745,22 @@ static int handle_jeita(struct step_chg_info *chip)
 set_jeita_fv:
 	vote(chip->fv_votable, JEITA_VOTER, fv_uv ? true : false, fv_uv);
 
+#ifdef CONFIG_FIH
+#if defined(CONFIG_FIH_BATTERY)
+	if (current_jeita_fcc_index != chip->jeita_fcc_index ||
+	    current_jeita_fv_index != chip->jeita_fv_index)
+#endif /* CONFIG_FIH_BATTERY */
+	pr_err("%s = %d FCC = %duA FV = %duV\n",
+		chip->jeita_fcc_config->prop_name, pval.intval, fcc_ua, fv_uv);
+#else
+	pr_debug("%s = %d FCC = %duA FV = %duV\n",
+		chip->jeita_fcc_config->prop_name, pval.intval, fcc_ua, fv_uv);
+#endif
+
 update_time:
+#ifdef CONFIG_FIH
+	chip->last_jeita_status = jeita_pval.intval;
+#endif
 	chip->jeita_last_update_time = ktime_get();
 
 	if (!chip->main_psy)
@@ -627,8 +789,13 @@ static int handle_battery_insertion(struct step_chg_info *chip)
 
 	if (chip->batt_missing != (!pval.intval)) {
 		chip->batt_missing = !pval.intval;
+#ifdef CONFIG_FIH
+		pr_err("battery %s detected\n",
+				chip->batt_missing ? "removal" : "insertion");
+#else
 		pr_debug("battery %s detected\n",
 				chip->batt_missing ? "removal" : "insertion");
+#endif
 		if (chip->batt_missing) {
 			chip->step_chg_cfg_valid = false;
 			chip->sw_jeita_cfg_valid = false;

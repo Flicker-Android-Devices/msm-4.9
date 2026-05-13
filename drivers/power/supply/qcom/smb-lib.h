@@ -1,4 +1,5 @@
 /* Copyright (c) 2016-2018 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 Razer Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +20,9 @@
 #include <linux/regulator/consumer.h>
 #include <linux/extcon.h>
 #include "storm-watch.h"
+#ifdef CONFIG_FIH
+#include <linux/msm_drm_notify.h>
+#endif
 
 enum print_reason {
 	PR_INTERRUPT	= BIT(0),
@@ -59,6 +63,9 @@ enum print_reason {
 #define SW_QC3_VOTER			"SW_QC3_VOTER"
 #define AICL_RERUN_VOTER		"AICL_RERUN_VOTER"
 #define LEGACY_UNKNOWN_VOTER		"LEGACY_UNKNOWN_VOTER"
+#ifdef CONFIG_FIH
+#define SS_ADAPTER_VOTER		"SS_ADAPTER_VOTER"
+#endif
 #define CC2_WA_VOTER			"CC2_WA_VOTER"
 #define QNOVO_VOTER			"QNOVO_VOTER"
 #define BATT_PROFILE_VOTER		"BATT_PROFILE_VOTER"
@@ -74,6 +81,10 @@ enum print_reason {
 #define FG_ESR_VOTER			"FG_ESR_VOTER"
 #define FCC_STEPPER_VOTER		"FCC_STEPPER_VOTER"
 #define PD_NOT_SUPPORTED_VOTER		"PD_NOT_SUPPORTED_VOTER"
+
+#ifdef CONFIG_FIH
+#define RAZER_LIMIT_VOTER		"RAZER_LIMIT_VOTER"
+#endif
 
 #define VCONN_MAX_ATTEMPTS	3
 #define OTG_MAX_ATTEMPTS	3
@@ -274,6 +285,13 @@ struct smb_charger {
 	/* notifiers */
 	struct notifier_block	nb;
 
+#ifdef CONFIG_FIH
+	/* Thermal charge limiting */
+	struct notifier_block	dsi_panel_notif;
+	bool 			screen_on;
+	struct mutex 		thermal_charge_limit_lock;
+#endif
+
 	/* parallel charging */
 	struct parallel_params	pl;
 
@@ -317,6 +335,10 @@ struct smb_charger {
 	struct work_struct	legacy_detection_work;
 	struct delayed_work	uusb_otg_work;
 	struct delayed_work	bb_removal_work;
+#if defined(CONFIG_FIH_BATTERY)
+	struct delayed_work	info_update_work;
+	struct delayed_work	charging_check_work;
+#endif /* CONFIG_FIH_BATTERY */
 
 	/* cached status */
 	int			voltage_min_uv;
@@ -385,6 +407,24 @@ struct smb_charger {
 	int			pulse_cnt;
 
 	int			die_health;
+
+#if defined(CONFIG_FIH_BATTERY)
+	int			*info_update_ms;
+	int			*reg_dump_mask;
+	bool			charging_check_en;
+	bool			forecast_charging_en;
+	bool			forecast_charging;
+#endif /* CONFIG_FIH_BATTERY */
+
+#ifdef CONFIG_FIH
+	/* Razer charge limiting system */
+	bool razer_charge_limit_enable;
+	bool razer_charge_limit_active;
+	int  razer_charge_limit_max;
+	int  razer_charge_limit_dropdown;
+	struct mutex razer_charge_limit_lock;
+	struct work_struct razer_charge_limit_update_work;
+#endif
 };
 
 int smblib_read(struct smb_charger *chg, u16 addr, u8 *val);
@@ -542,6 +582,10 @@ int smblib_disable_hw_jeita(struct smb_charger *chg, bool disable);
 int smblib_rerun_aicl(struct smb_charger *chg);
 int smblib_set_icl_current(struct smb_charger *chg, int icl_ua);
 int smblib_get_icl_current(struct smb_charger *chg, int *icl_ua);
+#if defined(CONFIG_FIH_BATTERY)
+int smblib_set_icl_current_override(struct smb_charger *chg, int icl_ua);
+int smblib_get_icl_current_override(struct smb_charger *chg, int *icl_ua);
+#endif /* CONFIG_FIH_BATTERY */
 int smblib_get_charge_current(struct smb_charger *chg, int *total_current_ua);
 int smblib_get_prop_pr_swap_in_progress(struct smb_charger *chg,
 				union power_supply_propval *val);
@@ -557,4 +601,9 @@ int smblib_force_ufp(struct smb_charger *chg);
 
 int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
+
+#ifdef CONFIG_FIH
+void razer_charge_limit_update(struct smb_charger *chg);
+#endif
+
 #endif /* __SMB2_CHARGER_H */
