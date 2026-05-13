@@ -1,4 +1,6 @@
-/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2018, Razer Inc. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -267,6 +269,11 @@ struct sde_connector_ops {
 	 * Returns: v_front_porch on success error-code on failure
 	 */
 	int (*get_panel_vfp)(void *display, int h_active, int v_active);
+
+	/**
+	 * display_input_boost
+	 */
+	int (*display_input_boost)(void *display, bool enable_boost);
 };
 
 /**
@@ -329,8 +336,7 @@ struct sde_connector_evt {
  * @bl_scale_dirty: Flag to indicate PP BL scale value(s) is changed
  * @bl_scale: BL scale value for ABA feature
  * @bl_scale_ad: BL scale value for AD feature
- * @qsync_mode: Qsync mode, where 0: disabled 1: continuous mode
- * @qsync_updated: Qsync settings were updated
+ * @qsync_supported: Connector supports qsync feature
  * last_cmd_tx_sts: status of the last command transfer
  */
 struct sde_connector {

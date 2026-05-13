@@ -317,3 +317,4 @@ int dsi_clk_set_byte_clk_rate(void *client, u64 byte_clk, u32 index);
  */
 int dsi_clk_update_parent(struct dsi_clk_link_set *parent,
 			  struct dsi_clk_link_set *child);
+#endif /* _DSI_CLK_H_ */

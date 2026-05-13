@@ -487,8 +487,8 @@ struct msm_roi_list {
 /**
  * struct - msm_display_kickoff_params - info for display features at kickoff
  * @rois: Regions of interest structure for mapping CRTC to Connector output
- * @qsync_mode: Qsync mode, where 0: disabled 1: continuous mode
- * @qsync_update: Qsync settings were changed/updated
+ * @qsync: Qsync mode, where 0: disabled 1: continuous mode
+ * @qsync_enabled: Qsync is supported by hw and panel
  */
 struct msm_display_kickoff_params {
 	struct msm_roi_list *rois;
