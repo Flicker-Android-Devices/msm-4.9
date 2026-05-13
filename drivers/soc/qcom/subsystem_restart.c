@@ -209,6 +209,14 @@ struct subsys_device {
 	struct list_head list;
 };
 
+#ifdef CONFIG_FIH
+/*SSR_RAMDUMP_Porting_START*/
+#define MAX_SSR_REASON_LEN 81U
+extern char fih_failure_reason[MAX_SSR_REASON_LEN];
+bool disable_MDM_RamDump;
+/*SSR_RAMDUMP_Porting_END*/
+#endif
+
 static struct subsys_device *to_subsys(struct device *d)
 {
 	return container_of(d, struct subsys_device, dev);
@@ -638,7 +646,18 @@ static void notify_each_subsys_device(struct subsys_device **list,
 			send_sysmon_notif(dev);
 
 		notif_data.crashed = subsys_get_crash_status(dev);
+#ifdef CONFIG_FIH
+		/*SSR_RAMDUMP_Porting_START*/
+		if (((strcmp(dev->desc->name, "modem") == 0) && disable_MDM_RamDump) || (!(strcmp(dev->desc->name, "modem") == 0))){
+			notif_data.enable_ramdump = 0;
+		}
+		else{
+			notif_data.enable_ramdump = is_ramdump_enabled(dev);
+		}
+		/*SSR_RAMDUMP_Porting_END*/ 
+#else
 		notif_data.enable_ramdump = is_ramdump_enabled(dev);
+#endif 
 		notif_data.enable_mini_ramdumps = enable_mini_ramdumps;
 		notif_data.no_auth = dev->desc->no_auth;
 		notif_data.pdev = pdev;
@@ -738,7 +757,12 @@ static int subsystem_ramdump(struct subsys_device *dev, void *data)
 {
 	const char *name = dev->desc->name;
 
+#ifdef CONFIG_FIH
+	/*SSR_RAMDUMP_Porting*/
+	if (dev->desc->ramdump && ((strcmp(name, "modem") == 0) && !disable_MDM_RamDump))
+#else
 	if (dev->desc->ramdump)
+#endif
 		if (dev->desc->ramdump(is_ramdump_enabled(dev), dev->desc) < 0)
 			pr_warn("%s[%s:%d]: Ramdump failed.\n",
 				name, current->comm, current->pid);
@@ -1104,6 +1128,20 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 	pr_debug("[%s:%d]: Starting restart sequence for %s\n",
 			current->comm, current->pid, desc->name);
 	notify_each_subsys_device(list, count, SUBSYS_BEFORE_SHUTDOWN, NULL);
+#ifdef CONFIG_FIH
+	/*SSR_RAMDUMP_Porting_START*/
+	if ((strcmp(desc->name, "modem") == 0) && enable_ramdumps) {
+		if (strstr(fih_failure_reason, "diagoem.c") != NULL ||
+		    strstr(fih_failure_reason, "fih_qmi_svc.c") != NULL ||
+		    strstr(fih_failure_reason, "IMS NV FUNCTION SSR triggle") != NULL) {
+			disable_MDM_RamDump = true;
+		}
+	} else {
+		disable_MDM_RamDump = false;
+	}
+	/*SSR_RAMDUMP_Porting_END*/
+#endif
+
 	ret = for_each_subsys_device(list, count, NULL, subsystem_shutdown);
 	if (ret)
 		goto err;
@@ -1129,6 +1167,13 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 
 	pr_info("[%s:%d]: Restart sequence for %s completed.\n",
 			current->comm, current->pid, desc->name);
+#ifdef CONFIG_FIH
+	/*SSR_RAMDUMP_Porting_START*/
+	if (strcmp(desc->name, "modem") == 0) {
+		disable_MDM_RamDump = false;
+	}
+	/*SSR_RAMDUMP_Porting_END*/
+#endif
 
 err:
 	/* Reset subsys count */
