@@ -1990,6 +1990,7 @@ int xhci_hub_status_data(struct usb_hcd *hcd, char *buf);
 int xhci_find_raw_port_number(struct usb_hcd *hcd, int port1);
 void xhci_hc_died(struct xhci_hcd *xhci);
 int xhci_get_core_id(struct usb_hcd *hcd);
+void xhci_hc_died(struct xhci_hcd *xhci);
 
 #ifdef CONFIG_PM
 int xhci_bus_suspend(struct usb_hcd *hcd);
