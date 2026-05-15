@@ -307,9 +307,9 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
 
 		switch (*blank) {
 		case MSM_DRM_BLANK_POWERDOWN:
-			fpc1020->screen_on = false;
-			pr_info("fpc1020: suspending++\n");
-			(void) irq_active_toggle(false, fpc1020->dev);
+			fpc1020->screen_on = true;
+			pr_info("fpc1020: screen off, but keeping fingerprint active\n");
+			(void) irq_active_toggle(true, fpc1020->dev);
 			pr_info("fpc1020: suspended--\n");
 			rc = NOTIFY_OK;
 		break;
