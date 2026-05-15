@@ -173,7 +173,7 @@ static void fg_encode_current(struct fg_sram_param *sp,
 	enum fg_sram_param_id id, int val_ma, u8 *buf);
 static void fg_encode_default(struct fg_sram_param *sp,
 	enum fg_sram_param_id id, int val, u8 *buf);
-static const char *fg_get_cycle_count(struct fg_chip *chip);
+static int fg_get_cycle_count(struct fg_chip *chip);
 
 static struct fg_irq_info fg_irqs[FG_IRQ_MAX];
 
