@@ -173,7 +173,9 @@ static void fg_encode_current(struct fg_sram_param *sp,
 	enum fg_sram_param_id id, int val_ma, u8 *buf);
 static void fg_encode_default(struct fg_sram_param *sp,
 	enum fg_sram_param_id id, int val, u8 *buf);
+#ifndef CONFIG_FIH_BATTERY
 static int fg_get_cycle_count(struct fg_chip *chip);
+#endif /* CONFIG_FIH_BATTERY */
 
 static struct fg_irq_info fg_irqs[FG_IRQ_MAX];
 
@@ -2771,6 +2773,7 @@ out:
 	mutex_unlock(&chip->cyc_ctr.lock);
 }
 
+#ifndef CONFIG_FIH_BATTERY
 static int fg_get_cycle_count(struct fg_chip *chip)
 {
 	int i, len = 0;
@@ -2788,6 +2791,7 @@ static int fg_get_cycle_count(struct fg_chip *chip)
 
 	return len;
 }
+#endif /* CONFIG_FIH_BATTERY */
 
 static const char *fg_get_cycle_counts(struct fg_chip *chip)
 {
